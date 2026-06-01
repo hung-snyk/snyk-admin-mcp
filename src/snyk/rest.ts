@@ -101,6 +101,9 @@ export async function searchAssets(
     method: "POST",
     body: JSON.stringify(body),
     version: ASSET_API_VERSION,
+    // This endpoint validates against a plain JSON schema and rejects the
+    // JSON:API content type that restFetch sends by default.
+    headers: { "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error(`REST searchAssets failed: ${res.status} ${await res.text()}`);
   return res.json() as Promise<Record<string, unknown>>;
