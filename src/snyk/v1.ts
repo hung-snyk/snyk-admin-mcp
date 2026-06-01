@@ -1,4 +1,4 @@
-import { getBaseUrl, sanitizePathSegment, type SnykApiConfig } from "./types.js";
+import { assertAllowedUrl, getBaseUrl, sanitizePathSegment, type SnykApiConfig } from "./types.js";
 import { fetchWithRetry, v1RateLimiter } from "./rateLimit.js";
 
 /**
@@ -12,7 +12,8 @@ export async function v1Fetch(
   options: RequestInit = {}
 ): Promise<Response> {
   const { v1 } = getBaseUrl(config);
-  const url = path.startsWith("http") ? path : `${v1}${path.startsWith("/") ? path : `/${path}`}`;
+  const rawUrl = path.startsWith("http") ? path : `${v1}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = assertAllowedUrl(config, rawUrl);
   return fetchWithRetry(v1RateLimiter, () =>
     fetch(url, {
       ...options,

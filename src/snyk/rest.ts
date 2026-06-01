@@ -1,4 +1,4 @@
-import { ASSET_API_VERSION, getBaseUrl, REST_API_VERSION, sanitizePathSegment, type SnykApiConfig } from "./types.js";
+import { ASSET_API_VERSION, assertAllowedUrl, getBaseUrl, REST_API_VERSION, sanitizePathSegment, type SnykApiConfig } from "./types.js";
 import { fetchWithRetry, restRateLimiter } from "./rateLimit.js";
 
 /**
@@ -17,7 +17,7 @@ export async function restFetch(
   const url = path.startsWith("http") ? path : `${rest}${path.startsWith("/") ? path : `/${path}`}`;
   const apiVersion = version ?? REST_API_VERSION;
   const versionParam = url.includes("?") ? `&version=${apiVersion}` : `?version=${apiVersion}`;
-  const finalUrl = url + versionParam;
+  const finalUrl = assertAllowedUrl(config, url + versionParam);
   return fetchWithRetry(restRateLimiter, () =>
     fetch(finalUrl, {
       ...fetchOptions,
