@@ -2,6 +2,9 @@ export type SnykRegion = "global" | "eu" | "us" | "au";
 
 export const REST_API_VERSION = "2024-10-15";
 
+/** Version for the Asset API endpoints (Early Access). Newer than the default REST version. */
+export const ASSET_API_VERSION = "2026-03-25";
+
 /** Sanitize ID/path segment before use in API URLs to prevent SSRF. Returns validated string. */
 export function sanitizePathSegment(value: string, label: string): string {
   if (!value || typeof value !== "string") throw new Error(`Invalid ${label}`);

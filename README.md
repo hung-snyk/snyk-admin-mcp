@@ -7,6 +7,7 @@ MCP server for managing the Snyk platform as a customer with group admin permiss
 - **Copy settings between organizations** – Copy org settings from a source org to a target (V1 API).
 - **Clone integration** – Clone an integration (with settings and credentials) from one org to another (V1 API).
 - **Bulk asset labels** – Add labels (project tags) to many projects in one go (V1 API).
+- **Asset API** – Search assets, look up an asset and its related projects/assets, update an asset's class/labels/tags, and manage repository aliases (REST API, Early Access).
 - **Dry run** – Every mutation tool supports `dry_run=true` (default) to return a plan only.
 - **User approval** – To apply changes, call the same tool with `dry_run=false` and the `approval_token` returned from the dry run. Tokens expire after 10 minutes.
 
@@ -19,6 +20,10 @@ MCP server for managing the Snyk platform as a customer with group admin permiss
 | Org settings (get/update) | V1 | `GET/PUT org/{orgId}/settings` |
 | Integrations (list, clone) | V1 | `GET org/{orgId}/integrations`, `POST .../integrations/{id}/clone` |
 | Project tags/labels | V1 | `POST org/{orgId}/project/{projectId}/tags` |
+| Search assets | REST | `POST /groups/{group_id}/assets/search` (Asset API, `version=2026-03-25`) |
+| Get asset / related projects / related assets | REST | `GET /groups/{group_id}/assets/{asset_id}` and `.../relationships/{projects,assets}` |
+| Update asset (class, labels, tags) | REST | `PATCH /groups/{group_id}/assets/{asset_id}` |
+| Repository aliases (list, add, remove) | REST | `GET/POST/DELETE /{groups\|orgs}/{id}/assets/repository/aliases` |
 
 ## Setup
 
@@ -85,6 +90,22 @@ Replace `/ABSOLUTE/PATH/TO/snyk-admin-mcp` with the real path to this repo (e.g.
 | `snyk_copy_org_settings` | Copy org settings from source to target. Dry run → plan + `approval_token`; then call with `dry_run=false` and that token to apply. |
 | `snyk_clone_integration` | Clone one integration from source org to target org (CLI integration excluded). Same dry run / approval flow. |
 | `snyk_bulk_asset_labels` | Add labels to multiple projects. Same dry run / approval flow. |
+| `snyk_bulk_update_inventory_assets` | Bulk update inventory assets (class, labels, tags) via REST Inventory Assets API. Dry run / approval flow. |
+| `snyk_search_assets` | Search assets in a group with optional attribute filters (REST Asset API). Read-only. |
+| `snyk_get_asset` | Get a single asset by ID within a group (REST Asset API). Read-only. |
+| `snyk_list_asset_projects` | List projects related to an asset, with cursor pagination (REST Asset API). Read-only. |
+| `snyk_list_related_assets` | List assets related to an asset, with optional type filter and pagination (REST Asset API). Read-only. |
+| `snyk_update_asset` | Update an asset's class, labels, and/or tags (REST Asset API). Dry run / approval flow. |
+| `snyk_list_repository_aliases` | List repository aliases for a group or org (REST Asset API). Read-only. |
+| `snyk_add_repository_alias` | Add repository aliases for a group or org (REST Asset API). Dry run / approval flow. |
+| `snyk_remove_repository_alias` | Remove repository aliases from a group or org (REST Asset API). Dry run / approval flow. |
+
+## Asset API notes
+
+- The Asset API is **group-scoped** for search, lookup, relationships, and updates: pass `group_id` (a group UUID), not an org ID.
+- Repository alias tools (`snyk_*_repository_alias`, `snyk_list_repository_aliases`) accept **either** `group_id` **or** `org_id` (exactly one).
+- Search supports nested filters: a single `{ attribute, operator, values }` node, or a logical `and`/`or` node whose `values` array contains nested filter nodes. Filterable attributes include `name`, `type`, `class`, `labels`, `tags.<key>`, `repository_url`, and others.
+- These endpoints are Early Access and use REST API `version=2026-03-25`.
 
 ## Workflow (mutations)
 

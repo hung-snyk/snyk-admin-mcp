@@ -102,6 +102,110 @@ const CreateOrganizationArgsSchema = z.object({
   approval_token: z.string().optional(),
 });
 
+// --- Asset API (Early Access): search, get, relationships, update, aliases ---
+
+/** Recursive filter node for asset search. */
+type AssetSearchAttributesInput = {
+  attribute?: string;
+  operator: string;
+  values: Array<string | number | boolean | AssetSearchAttributesInput>;
+};
+const AssetSearchAttributesSchema: z.ZodType<AssetSearchAttributesInput> = z.lazy(() =>
+  z.object({
+    attribute: z.string().optional().describe("Asset attribute to filter on (e.g. name, type, class, labels, tags.<key>). Omit when using a logical operator (and/or)."),
+    operator: z.string().describe("Operator: and, or, equal, not_equal, contains, not_contains, starts_with, ends_with, in, not_in, greater_than, lower_than, equal_or_greater_than, equal_or_lower_than."),
+    values: z.array(z.union([z.string(), z.number(), z.boolean(), AssetSearchAttributesSchema])).describe("Values, or nested filter objects when using and/or."),
+  })
+);
+
+const SearchAssetsArgsSchema = z.object({
+  group_id: z.string().describe("Group ID to search assets in"),
+  query: z.object({ attributes: AssetSearchAttributesSchema }).optional().describe("Optional filter. Omit to list all assets."),
+});
+
+const GetAssetArgsSchema = z.object({
+  group_id: z.string().describe("Group ID that owns the asset"),
+  asset_id: z.string().describe("Asset ID (UUID)"),
+});
+
+const ListAssetProjectsArgsSchema = z.object({
+  group_id: z.string(),
+  asset_id: z.string(),
+  limit: z.number().int().min(10).max(100).optional(),
+  starting_after: z.string().optional(),
+  ending_before: z.string().optional(),
+});
+
+const ListRelatedAssetsArgsSchema = z.object({
+  group_id: z.string(),
+  asset_id: z.string(),
+  type: z.enum(["repository", "package", "image"]).optional(),
+  limit: z.number().int().min(10).max(100).optional(),
+  starting_after: z.string().optional(),
+  ending_before: z.string().optional(),
+});
+
+const UpdateAssetArgsSchema = z.object({
+  group_id: z.string().describe("Group ID that owns the asset"),
+  asset_id: z.string().describe("Asset ID (UUID)"),
+  type: z.enum(["repository", "image", "package"]).describe("Asset type"),
+  class: z.object({
+    display_name: z.enum(["A", "B", "C", "D"]).optional(),
+    rank: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+    locked: z.boolean().optional(),
+  }).optional().describe("Set asset class by display_name (A-D) or rank (1-4)."),
+  labels: z.object({
+    add: z.array(z.string()).optional(),
+    remove: z.array(z.string()).optional(),
+  }).optional().describe("Labels to add/remove."),
+  tags: z.object({
+    add: z.record(z.string(), z.string()).optional(),
+    remove: z.array(z.string()).optional(),
+  }).optional().describe("Tag key-value pairs to add, and tag keys to remove."),
+  dry_run: z.boolean().default(true),
+  approval_token: z.string().optional(),
+});
+
+const ListRepositoryAliasesArgsSchema = z.object({
+  group_id: z.string().optional().describe("Group ID (provide this or org_id)"),
+  org_id: z.string().optional().describe("Org ID (provide this or group_id)"),
+  url: z.string().optional().describe("Optional repository URL filter"),
+  limit: z.number().int().min(10).max(100).optional(),
+  starting_after: z.string().optional(),
+  ending_before: z.string().optional(),
+});
+
+const AddRepositoryAliasArgsSchema = z.object({
+  group_id: z.string().optional().describe("Group ID (provide this or org_id)"),
+  org_id: z.string().optional().describe("Org ID (provide this or group_id)"),
+  aliases: z.array(z.object({
+    url: z.string().describe("The canonical repository URL"),
+    new_url: z.string().describe("The alias URL to link to the canonical URL"),
+  })).min(1).max(100).describe("Repository aliases to add"),
+  dry_run: z.boolean().default(true),
+  approval_token: z.string().optional(),
+});
+
+const RemoveRepositoryAliasArgsSchema = z.object({
+  group_id: z.string().optional().describe("Group ID (provide this or org_id)"),
+  org_id: z.string().optional().describe("Org ID (provide this or group_id)"),
+  aliases: z.array(z.object({
+    id: z.string().describe("The ID of the canonical asset-reference document that owns the alias"),
+    url: z.string().describe("The canonical URL of the document that owns the alias"),
+    new_url: z.string().describe("The aliased URL to detach from its canonical asset"),
+  })).min(1).max(100).describe("Repository aliases to remove"),
+  dry_run: z.boolean().default(true),
+  approval_token: z.string().optional(),
+});
+
+/** Resolve org-or-group scope for repository alias endpoints. */
+function resolveAssetScope(groupId?: string, orgId?: string): { scope: "groups" | "orgs"; id: string } {
+  if (groupId && orgId) throw new Error("Provide either group_id or org_id, not both.");
+  if (groupId) return { scope: "groups", id: groupId };
+  if (orgId) return { scope: "orgs", id: orgId };
+  throw new Error("Provide group_id or org_id.");
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
@@ -224,6 +328,189 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["org_id"],
       },
     },
+    {
+      name: "snyk_search_assets",
+      description: "Search assets in a group using the Asset API (REST, Early Access). POST /groups/{group_id}/assets/search. Read-only. Provide an optional filter query, or omit it to list all assets.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID to search assets in" },
+          query: {
+            type: "object",
+            description: "Optional filter. Omit to list all assets.",
+            properties: {
+              attributes: {
+                type: "object",
+                description: "Filter node. Use a single attribute filter, or a logical operator (and/or) with nested filters in values.",
+                properties: {
+                  attribute: { type: "string", description: "Asset attribute to filter on (e.g. name, type, class, labels, tags.<key>). Omit for logical operators." },
+                  operator: { type: "string", description: "and, or, equal, not_equal, contains, not_contains, starts_with, ends_with, in, not_in, greater_than, lower_than, equal_or_greater_than, equal_or_lower_than" },
+                  values: { type: "array", description: "Values, or nested filter objects when using and/or." },
+                },
+                required: ["operator", "values"],
+              },
+            },
+            required: ["attributes"],
+          },
+        },
+        required: ["group_id"],
+      },
+    },
+    {
+      name: "snyk_get_asset",
+      description: "Get a single asset by its ID within a group (REST Asset API, Early Access). GET /groups/{group_id}/assets/{asset_id}. Read-only.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID that owns the asset" },
+          asset_id: { type: "string", description: "Asset ID (UUID)" },
+        },
+        required: ["group_id", "asset_id"],
+      },
+    },
+    {
+      name: "snyk_list_asset_projects",
+      description: "List projects related to an asset (REST Asset API, Early Access). GET /groups/{group_id}/assets/{asset_id}/relationships/projects. Read-only. Cursor pagination via starting_after/ending_before.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string" },
+          asset_id: { type: "string" },
+          limit: { type: "number", description: "Records to return (10-100)" },
+          starting_after: { type: "string", description: "Cursor: return records after this cursor" },
+          ending_before: { type: "string", description: "Cursor: return records before this cursor" },
+        },
+        required: ["group_id", "asset_id"],
+      },
+    },
+    {
+      name: "snyk_list_related_assets",
+      description: "List assets related to an asset (REST Asset API, Early Access). GET /groups/{group_id}/assets/{asset_id}/relationships/assets. Read-only. Optional type filter and cursor pagination.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string" },
+          asset_id: { type: "string" },
+          type: { type: "string", enum: ["repository", "package", "image"], description: "Filter by asset type" },
+          limit: { type: "number", description: "Records to return (10-100)" },
+          starting_after: { type: "string" },
+          ending_before: { type: "string" },
+        },
+        required: ["group_id", "asset_id"],
+      },
+    },
+    {
+      name: "snyk_update_asset",
+      description: "Update an asset's class, labels, and/or tags (REST Asset API, Early Access). PATCH /groups/{group_id}/assets/{asset_id}. Use dry_run=true first, then dry_run=false with approval_token to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID that owns the asset" },
+          asset_id: { type: "string", description: "Asset ID (UUID)" },
+          type: { type: "string", enum: ["repository", "image", "package"], description: "Asset type" },
+          class: {
+            type: "object",
+            description: "Set asset class by display_name (A-D) or rank (1-4). If both given, rank wins.",
+            properties: {
+              display_name: { type: "string", enum: ["A", "B", "C", "D"] },
+              rank: { type: "number", enum: [1, 2, 3, 4] },
+              locked: { type: "boolean", description: "Whether the class is locked from policy changes" },
+            },
+          },
+          labels: {
+            type: "object",
+            properties: {
+              add: { type: "array", items: { type: "string" } },
+              remove: { type: "array", items: { type: "string" } },
+            },
+            description: "Labels to add/remove",
+          },
+          tags: {
+            type: "object",
+            properties: {
+              add: { type: "object", additionalProperties: { type: "string" }, description: "Tag key-value pairs to add" },
+              remove: { type: "array", items: { type: "string" }, description: "Tag keys to remove" },
+            },
+            description: "Tags to add/remove",
+          },
+          dry_run: { type: "boolean", default: true },
+          approval_token: { type: "string" },
+        },
+        required: ["group_id", "asset_id", "type"],
+      },
+    },
+    {
+      name: "snyk_list_repository_aliases",
+      description: "List repository aliases for a group or org (REST Asset API, Early Access). GET /{groups|orgs}/{id}/assets/repository/aliases. Read-only. Provide group_id or org_id.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID (provide this or org_id)" },
+          org_id: { type: "string", description: "Org ID (provide this or group_id)" },
+          url: { type: "string", description: "Optional repository URL filter" },
+          limit: { type: "number", description: "Records to return (10-100)" },
+          starting_after: { type: "string" },
+          ending_before: { type: "string" },
+        },
+      },
+    },
+    {
+      name: "snyk_add_repository_alias",
+      description: "Add repository aliases for a group or org (REST Asset API, Early Access). POST /{groups|orgs}/{id}/assets/repository/aliases. Provide group_id or org_id. Use dry_run=true first, then dry_run=false with approval_token to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID (provide this or org_id)" },
+          org_id: { type: "string", description: "Org ID (provide this or group_id)" },
+          aliases: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+              type: "object",
+              properties: {
+                url: { type: "string", description: "The canonical repository URL" },
+                new_url: { type: "string", description: "The alias URL to link to the canonical URL" },
+              },
+              required: ["url", "new_url"],
+            },
+            description: "Repository aliases to add",
+          },
+          dry_run: { type: "boolean", default: true },
+          approval_token: { type: "string" },
+        },
+        required: ["aliases"],
+      },
+    },
+    {
+      name: "snyk_remove_repository_alias",
+      description: "Remove repository aliases from a group or org (REST Asset API, Early Access). DELETE /{groups|orgs}/{id}/assets/repository/aliases. Provide group_id or org_id. Use dry_run=true first, then dry_run=false with approval_token to apply.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Group ID (provide this or org_id)" },
+          org_id: { type: "string", description: "Org ID (provide this or group_id)" },
+          aliases: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "The ID of the canonical asset-reference document that owns the alias" },
+                url: { type: "string", description: "The canonical URL of the document that owns the alias" },
+                new_url: { type: "string", description: "The aliased URL to detach from its canonical asset" },
+              },
+              required: ["id", "url", "new_url"],
+            },
+            description: "Repository aliases to remove",
+          },
+          dry_run: { type: "boolean", default: true },
+          approval_token: { type: "string" },
+        },
+        required: ["aliases"],
+      },
+    },
   ],
 }));
 
@@ -261,6 +548,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const org_id = (args as { org_id?: string }).org_id;
       if (!org_id) throw new Error("org_id is required");
       const data = await rest.listProjects(config, sanitizePathSegment(org_id, "org_id"));
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_search_assets") {
+      const parsed = SearchAssetsArgsSchema.parse(args);
+      const data = await rest.searchAssets(config, parsed.group_id, parsed.query);
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_get_asset") {
+      const parsed = GetAssetArgsSchema.parse(args);
+      const data = await rest.getAsset(config, parsed.group_id, parsed.asset_id);
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_list_asset_projects") {
+      const parsed = ListAssetProjectsArgsSchema.parse(args);
+      const data = await rest.listAssetProjects(config, parsed.group_id, parsed.asset_id, {
+        limit: parsed.limit,
+        starting_after: parsed.starting_after,
+        ending_before: parsed.ending_before,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_list_related_assets") {
+      const parsed = ListRelatedAssetsArgsSchema.parse(args);
+      const data = await rest.listRelatedAssets(config, parsed.group_id, parsed.asset_id, {
+        type: parsed.type,
+        limit: parsed.limit,
+        starting_after: parsed.starting_after,
+        ending_before: parsed.ending_before,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_list_repository_aliases") {
+      const parsed = ListRepositoryAliasesArgsSchema.parse(args);
+      const { scope, id } = resolveAssetScope(parsed.group_id, parsed.org_id);
+      const data = await rest.listRepositoryAliases(config, scope, id, {
+        url: parsed.url,
+        limit: parsed.limit,
+        starting_after: parsed.starting_after,
+        ending_before: parsed.ending_before,
+      });
       return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         isError: false,
@@ -494,6 +841,113 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const doneLabel = await formatOrgId(config, p.org_id);
       return {
         content: [{ type: "text", text: `Bulk inventory assets updated in ${doneLabel}.\n\nResult: ${JSON.stringify(result, null, 2)}` }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_update_asset") {
+      const parsed = UpdateAssetArgsSchema.parse(args);
+      const attributes: {
+        class?: { display_name?: "A" | "B" | "C" | "D"; rank?: 1 | 2 | 3 | 4; locked?: boolean };
+        labels?: { add?: string[]; remove?: string[] };
+        tags?: { add?: Record<string, string>; remove?: string[] };
+      } = {};
+      if (parsed.class !== undefined) attributes.class = parsed.class;
+      if (parsed.labels !== undefined) attributes.labels = parsed.labels;
+      if (parsed.tags !== undefined) attributes.tags = parsed.tags;
+      if (Object.keys(attributes).length === 0) {
+        return {
+          content: [{ type: "text", text: "Provide at least one of: class, labels, or tags to update." }],
+          isError: true,
+        };
+      }
+      if (parsed.dry_run) {
+        const plan = {
+          action: "update_asset",
+          group_id: parsed.group_id,
+          asset_id: parsed.asset_id,
+          type: parsed.type,
+          attributes,
+        };
+        const approval_token = createApproval(plan);
+        return {
+          content: [{
+            type: "text",
+            text: `Dry run – will update asset ${parsed.asset_id} in group ${parsed.group_id}.\n\nPlan:\n${JSON.stringify(plan, null, 2)}\n\nTo apply, call snyk_update_asset with dry_run=false and approval_token="${approval_token}"`,
+          }],
+          isError: false,
+        };
+      }
+      const plan = consumeApproval(parsed.approval_token ?? "");
+      if (!plan || (plan as { action?: string }).action !== "update_asset") {
+        return { content: [{ type: "text", text: "Invalid or expired approval_token. Run with dry_run=true first." }], isError: true };
+      }
+      const p = plan as { group_id: string; asset_id: string; type: "repository" | "image" | "package"; attributes: typeof attributes };
+      const result = await rest.updateAsset(config, p.group_id, p.asset_id, p.type, p.attributes);
+      return {
+        content: [{ type: "text", text: `Asset ${p.asset_id} updated.\n\nResult: ${JSON.stringify(result, null, 2)}` }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_add_repository_alias") {
+      const parsed = AddRepositoryAliasArgsSchema.parse(args);
+      const { scope, id } = resolveAssetScope(parsed.group_id, parsed.org_id);
+      if (parsed.dry_run) {
+        const plan = {
+          action: "add_repository_alias",
+          scope,
+          scope_id: id,
+          aliases: parsed.aliases,
+        };
+        const approval_token = createApproval(plan);
+        return {
+          content: [{
+            type: "text",
+            text: `Dry run – will add ${parsed.aliases.length} repository alias(es) to ${scope} ${id}.\n\nPlan:\n${JSON.stringify(plan, null, 2)}\n\nTo apply, call snyk_add_repository_alias with dry_run=false and approval_token="${approval_token}"`,
+          }],
+          isError: false,
+        };
+      }
+      const plan = consumeApproval(parsed.approval_token ?? "");
+      if (!plan || (plan as { action?: string }).action !== "add_repository_alias") {
+        return { content: [{ type: "text", text: "Invalid or expired approval_token. Run with dry_run=true first." }], isError: true };
+      }
+      const p = plan as { scope: "groups" | "orgs"; scope_id: string; aliases: { url: string; new_url: string }[] };
+      const result = await rest.addRepositoryAliases(config, p.scope, p.scope_id, p.aliases);
+      return {
+        content: [{ type: "text", text: `Added ${p.aliases.length} repository alias(es) to ${p.scope} ${p.scope_id}.\n\nResult: ${JSON.stringify(result, null, 2)}` }],
+        isError: false,
+      };
+    }
+
+    if (name === "snyk_remove_repository_alias") {
+      const parsed = RemoveRepositoryAliasArgsSchema.parse(args);
+      const { scope, id } = resolveAssetScope(parsed.group_id, parsed.org_id);
+      if (parsed.dry_run) {
+        const plan = {
+          action: "remove_repository_alias",
+          scope,
+          scope_id: id,
+          aliases: parsed.aliases,
+        };
+        const approval_token = createApproval(plan);
+        return {
+          content: [{
+            type: "text",
+            text: `Dry run – will remove ${parsed.aliases.length} repository alias(es) from ${scope} ${id}.\n\nPlan:\n${JSON.stringify(plan, null, 2)}\n\nTo apply, call snyk_remove_repository_alias with dry_run=false and approval_token="${approval_token}"`,
+          }],
+          isError: false,
+        };
+      }
+      const plan = consumeApproval(parsed.approval_token ?? "");
+      if (!plan || (plan as { action?: string }).action !== "remove_repository_alias") {
+        return { content: [{ type: "text", text: "Invalid or expired approval_token. Run with dry_run=true first." }], isError: true };
+      }
+      const p = plan as { scope: "groups" | "orgs"; scope_id: string; aliases: { id: string; url: string; new_url: string }[] };
+      const result = await rest.removeRepositoryAliases(config, p.scope, p.scope_id, p.aliases);
+      return {
+        content: [{ type: "text", text: `Removed ${p.aliases.length} repository alias(es) from ${p.scope} ${p.scope_id}.\n\nResult: ${JSON.stringify(result, null, 2)}` }],
         isError: false,
       };
     }
