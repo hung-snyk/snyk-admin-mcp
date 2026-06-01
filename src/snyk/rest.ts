@@ -69,6 +69,18 @@ export async function listProjects(
 /** Scope for repository-alias endpoints: org-level or group-level. */
 export type AssetScope = "orgs" | "groups";
 
+/**
+ * Allowlist of valid scope path segments. Looking the scope up here yields a
+ * trusted constant literal, so caller-influenced values can never flow into the
+ * request URL path (SSRF guard). Throws on anything outside the allowlist.
+ */
+const SCOPE_PATH_SEGMENT: Record<AssetScope, string> = { orgs: "orgs", groups: "groups" };
+function safeScopeSegment(scope: AssetScope): string {
+  const segment = SCOPE_PATH_SEGMENT[scope];
+  if (!segment) throw new Error(`Invalid asset scope: ${String(scope)}`);
+  return segment;
+}
+
 /** Recursive search filter node for the Asset search query. */
 export interface AssetSearchAttributes {
   attribute?: string;
@@ -193,9 +205,10 @@ export async function listRepositoryAliases(
   page: { url?: string; limit?: number; starting_after?: string; ending_before?: string } = {}
 ): Promise<Record<string, unknown>> {
   const label = scope === "orgs" ? "org_id" : "group_id";
+  const safeScope = safeScopeSegment(scope);
   const safeId = sanitizePathSegment(scopeId, label);
   const qs = buildQuery({ url: page.url, limit: page.limit, starting_after: page.starting_after, ending_before: page.ending_before });
-  const res = await restFetch(config, `/${scope}/${safeId}/assets/repository/aliases${qs}`, {
+  const res = await restFetch(config, `/${safeScope}/${safeId}/assets/repository/aliases${qs}`, {
     version: ASSET_API_VERSION,
   });
   if (!res.ok) throw new Error(`REST listRepositoryAliases failed: ${res.status} ${await res.text()}`);
@@ -213,11 +226,12 @@ export async function addRepositoryAliases(
   aliases: Array<{ url: string; new_url: string }>
 ): Promise<Record<string, unknown>> {
   const label = scope === "orgs" ? "org_id" : "group_id";
+  const safeScope = safeScopeSegment(scope);
   const safeId = sanitizePathSegment(scopeId, label);
   const body = {
     data: aliases.map((a) => ({ type: "asset_aliases" as const, attributes: { url: a.url, new_url: a.new_url } })),
   };
-  const res = await restFetch(config, `/${scope}/${safeId}/assets/repository/aliases`, {
+  const res = await restFetch(config, `/${safeScope}/${safeId}/assets/repository/aliases`, {
     method: "POST",
     body: JSON.stringify(body),
     version: ASSET_API_VERSION,
@@ -237,6 +251,7 @@ export async function removeRepositoryAliases(
   aliases: Array<{ id: string; url: string; new_url: string }>
 ): Promise<Record<string, unknown>> {
   const label = scope === "orgs" ? "org_id" : "group_id";
+  const safeScope = safeScopeSegment(scope);
   const safeId = sanitizePathSegment(scopeId, label);
   const body = {
     data: aliases.map((a) => ({
@@ -245,7 +260,7 @@ export async function removeRepositoryAliases(
       attributes: { url: a.url, new_url: a.new_url },
     })),
   };
-  const res = await restFetch(config, `/${scope}/${safeId}/assets/repository/aliases`, {
+  const res = await restFetch(config, `/${safeScope}/${safeId}/assets/repository/aliases`, {
     method: "DELETE",
     body: JSON.stringify(body),
     version: ASSET_API_VERSION,
